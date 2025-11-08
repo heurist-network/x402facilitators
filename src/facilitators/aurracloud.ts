@@ -32,7 +32,7 @@ export const aurracloudFacilitator = {
   config: aurracloud,
   discoveryConfig: aurracloudDiscovery,
   facilitatorUrl: '0x222c4367a2950f3b53af260e111fc3060b0983ff',
-  accessType: AccessType.PUBLIC,
+  accessType: AccessType.GATED_PAID,
   fee: 0,
   addresses: {
     [Network.BASE]: [
