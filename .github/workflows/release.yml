@@ -17,10 +17,25 @@ jobs:
       contents: write
       pages: write
       id-token: write  # Required for npm provenance and GitHub Pages
+    outputs:
+      package-changed: ${{ steps.check-changes.outputs.package-changed }}
       
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 2  # Need previous commit to compare
+          
+      - name: Check if package.json changed
+        id: check-changes
+        run: |
+          if git diff HEAD^ HEAD --name-only | grep -q "^package.json$"; then
+            echo "package-changed=true" >> $GITHUB_OUTPUT
+            echo "📦 package.json changed - will publish to npm"
+          else
+            echo "package-changed=false" >> $GITHUB_OUTPUT
+            echo "📦 package.json unchanged - skipping npm publish"
+          fi
         
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -47,12 +62,15 @@ jobs:
           fi
           
       - name: Install dependencies
+        if: steps.check-changes.outputs.package-changed == 'true'
         run: bun install --frozen-lockfile
         
       - name: Build library
+        if: steps.check-changes.outputs.package-changed == 'true'
         run: bun run build:lib
         
       - name: Verify library build output
+        if: steps.check-changes.outputs.package-changed == 'true'
         run: |
           if [ ! -f dist/index.js ]; then
             echo "Error: dist/index.js not found"
@@ -63,6 +81,7 @@ jobs:
           ls -lh dist/index.js dist/types.js
           
       - name: Verify TypeScript declarations
+        if: steps.check-changes.outputs.package-changed == 'true'
         run: |
           if [ ! -f dist/index.d.ts ]; then
             echo "Error: dist/index.d.ts not found"
@@ -71,6 +90,7 @@ jobs:
           echo "✅ TypeScript declarations generated"
           
       - name: Upload library artifacts
+        if: steps.check-changes.outputs.package-changed == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: library-build-${{ github.sha }}
@@ -85,9 +105,11 @@ jobs:
           retention-days: 30
           
       - name: Pack for inspection
+        if: steps.check-changes.outputs.package-changed == 'true'
         run: npm pack
         
       - name: Upload tarball artifact
+        if: steps.check-changes.outputs.package-changed == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: npm-package-${{ github.sha }}
@@ -95,20 +117,26 @@ jobs:
           retention-days: 90
           
       - name: Publish to npm (dry-run)
-        if: github.event.inputs.dry_run == 'true'
+        if: github.event.inputs.dry_run == 'true' && steps.check-changes.outputs.package-changed == 'true'
         run: npm publish --dry-run --access public --provenance
         
       - name: Publish to npm (with provenance via OIDC)
-        if: github.event_name == 'release'
+        if: github.event_name == 'release' && steps.check-changes.outputs.package-changed == 'true'
         run: npm publish --access public --provenance
         
       - name: Verify publication
-        if: github.event_name == 'release'
+        if: github.event_name == 'release' && steps.check-changes.outputs.package-changed == 'true'
         run: |
           sleep 10
           PACKAGE_NAME=$(node -p "require('./package.json').name")
           npm view "$PACKAGE_NAME" version
           echo "✅ Published to npm successfully!"
+          
+      - name: Skip npm publish notice
+        if: steps.check-changes.outputs.package-changed == 'false'
+        run: |
+          echo "⏭️ Skipping npm publish - package.json unchanged"
+          echo "Only website will be rebuilt and deployed"
           
   deploy-website:
     needs: build-and-publish
@@ -150,4 +178,17 @@ jobs:
         run: |
           echo "✅ Website deployed to GitHub Pages"
           echo "🌐 URL: ${{ steps.deployment.outputs.page_url }}"
+          
+      - name: Deployment summary
+        run: |
+          echo "## Deployment Summary 🚀" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ needs.build-and-publish.outputs.package-changed }}" == "true" ]; then
+            echo "✅ **NPM Package:** Published to npm" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "⏭️ **NPM Package:** Skipped (package.json unchanged)" >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "✅ **Website:** Deployed to GitHub Pages" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "🌐 **Live at:** [${{ steps.deployment.outputs.page_url }}](${{ steps.deployment.outputs.page_url }})" >> $GITHUB_STEP_SUMMARY
 
